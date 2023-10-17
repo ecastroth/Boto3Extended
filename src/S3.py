@@ -13,6 +13,35 @@ from tqdm.contrib.concurrent import process_map
 # -----------------------------------------------------------------------------
 #                           Functions
 # -----------------------------------------------------------------------------
+def listAllBuckets(profile_name: str) -> list[str]:
+    '''List all the S3 buckets in the profile'''
+    # Session
+    session = boto3.Session(profile_name= profile_name)
+    # Client
+    s3_client = session.client('s3')
+    # List
+    response = s3_client.list_buckets()
+    buckets = [x['Name'] for x in response['Buckets']]
+    return buckets
+
+
+def deleteBucket(profile_name: str, bucket_name: str, auto_empty: bool= False) -> None:
+    # Session
+    session = boto3.Session(profile_name= profile_name)
+    # Client
+    s3_client = session.client('s3')
+    # Verify if the bucket is empty
+    if auto_empty:
+        response = s3_client.list_objects_v2(Bucket= bucket_name)
+        # Bucket contains elements
+        if 'Contents' in response.keys():
+            bucket = S3Bucket(profile_name= profile_name, bucket_name= bucket_name)
+            bucket.deleteFiles(bucket.listAllElements())
+    # Delete
+    s3_client.delete_bucket(Bucket= bucket_name)
+    print(f'🚮 Deleted {bucket_name} bucket')
+
+    
 def downloadFromS3Bucket(paths: tuple[str, str], profile_name: str, 
                          bucket_name: str) -> bool:
     '''Download file from S3 bucket only if the file was not downloaded before
@@ -31,6 +60,7 @@ def downloadFromS3Bucket(paths: tuple[str, str], profile_name: str,
     # File is not downloaded
     else:
         return 0
+
 
 def uploadToS3Bucket(paths: tuple[str, str], profile_name: str, 
                      bucket_name: str) -> bool:
@@ -56,17 +86,7 @@ def uploadToS3Bucket(paths: tuple[str, str], profile_name: str,
             raise
     else:
         return 0
-    
-def listAllBuckets(profile_name: str) -> list[str]:
-    '''List all the S3 buckets in the profile'''
-    # Session
-    session = boto3.Session(profile_name= profile_name)
-    # Client
-    s3_client = session.client('s3')
-    # List
-    response = s3_client.list_buckets()
-    buckets = [x['Name'] for x in response['Buckets']]
-    return buckets
+
 
 def deleteFromS3Bucket(path: str, profile_name: str, bucket_name: str):
     '''Upload an image to S3 bucket only if the image was not already on it
@@ -90,6 +110,7 @@ class S3Bucket():
         print('🔮 Instanciating S3 Bucket')
         self._verifiyBucket()
 
+
     def _verifiyBucket(self) -> None:
         '''Verifies the existence of the bucket and gets the aws region'''
         # Session
@@ -104,6 +125,7 @@ class S3Bucket():
             aux = ' '.join([f'❌ The bucket of name "{self.bucket_name}" cannot be',
                   f'verified. The following exception was rised: {e}'])
             raise Exception(aux)
+
 
     def downloadFiles(self, localpaths: list[str], s3paths: list[str], 
                       message: str= '') -> None:
@@ -124,6 +146,7 @@ class S3Bucket():
         # Quantity of uploaded images
         print(f'⬇️  {sum(downloaded)} files were downloaded from {self.bucket_name}.')
 
+
     def uploadFiles(self, localpaths: list[str], s3paths: list[str], 
                    message: str= '') -> None:
         '''Multiprocess upload files to s3 only if the files were not 
@@ -142,6 +165,7 @@ class S3Bucket():
         # Quantity of uploaded images
         print(f'⬆️  {sum(uploaded)} files were uploaded to {self.bucket_name}.')
     
+
     def deleteFiles(self, s3paths: list[str], message: str= '') -> None:
         '''Multiprocess deletion of files from s3 bucket'''
         # Set profile and bucket names
@@ -154,6 +178,7 @@ class S3Bucket():
                     desc= tqdm_message,
                     chunksize= 1)
         print(f'🚮  Files deleted from {self.bucket_name}')
+
 
     def listAllElements(self) -> list[str]:
         '''List all files inside the bucket'''
