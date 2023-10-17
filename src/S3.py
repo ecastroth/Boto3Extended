@@ -13,8 +13,9 @@ from tqdm.contrib.concurrent import process_map
 # -----------------------------------------------------------------------------
 #                           Functions
 # -----------------------------------------------------------------------------
-def downloadFromS3Bucket(paths: tuple[str, str], profile_name: str, bucket_name: str):
-    '''Download an image from S3 bucket only if the image was downloaded before
+def downloadFromS3Bucket(paths: tuple[str, str], profile_name: str, 
+                         bucket_name: str) -> bool:
+    '''Download file from S3 bucket only if the file was not downloaded before
     '''
     # Session
     session = boto3.Session(profile_name= profile_name)
@@ -31,8 +32,9 @@ def downloadFromS3Bucket(paths: tuple[str, str], profile_name: str, bucket_name:
     else:
         return 0
 
-def uploadToS3Bucket(paths: tuple[str, str], profile_name: str, bucket_name: str):
-    '''Upload an image to S3 bucket only if the image was not already on it
+def uploadToS3Bucket(paths: tuple[str, str], profile_name: str, 
+                     bucket_name: str) -> bool:
+    '''Upload file to S3 bucket only if the file was not already on it
     '''
     # Session
     session = boto3.Session(profile_name= profile_name)
@@ -54,7 +56,29 @@ def uploadToS3Bucket(paths: tuple[str, str], profile_name: str, bucket_name: str
             raise
     else:
         return 0
+    
+def listAllBuckets(profile_name: str) -> list[str]:
+    '''List all the S3 buckets in the profile'''
+    # Session
+    session = boto3.Session(profile_name= profile_name)
+    # Client
+    s3_client = session.client('s3')
+    # List
+    response = s3_client.list_buckets()
+    buckets = [x['Name'] for x in response['Buckets']]
+    return buckets
 
+def deleteFromS3Bucket(path: str, profile_name: str, bucket_name: str):
+    '''Upload an image to S3 bucket only if the image was not already on it
+    '''
+    # Session
+    session = boto3.Session(profile_name= profile_name)
+    # Client
+    s3client = session.client('s3')
+    #Delete
+    s3client.delete_object(Bucket= bucket_name, Key= path)
+    # TODO: It's not possible to know if the deletion was successfull in Boto3 v1.26.76
+    
 # -----------------------------------------------------------------------------
 #                           S3 Class
 # -----------------------------------------------------------------------------
@@ -63,7 +87,7 @@ class S3Bucket():
         self.profile_name = profile_name
         self.bucket_name = bucket_name
 
-        print('🔮 Instanciating S3')
+        print('🔮 Instanciating S3 Bucket')
         self._verifiyBucket()
 
     def _verifiyBucket(self) -> None:
@@ -83,7 +107,7 @@ class S3Bucket():
 
     def downloadFiles(self, localpaths: list[str], s3paths: list[str], 
                       message: str= '') -> None:
-        '''Multiprocess download images from s3 only if the images were not 
+        '''Multiprocess download files from s3 only if the files were not 
         downloaded before
         '''
         # Set profile and bucket names
@@ -93,16 +117,16 @@ class S3Bucket():
         # Zip arguments
         paths = list(zip(localpaths, s3paths))
         # Upload
-        tqdm_message = message if message else f'⬇️  Downloading images from {self.bucket_name}'
+        tqdm_message = message if message else f'⬇️  Downloading files from {self.bucket_name}'
         downloaded = process_map(aux_function, paths, 
                                  desc= tqdm_message,
                                  chunksize= 1)
         # Quantity of uploaded images
-        print(f'⬇️  {sum(downloaded)} images were downloaded from {self.bucket_name}.')
+        print(f'⬇️  {sum(downloaded)} files were downloaded from {self.bucket_name}.')
 
     def uploadFiles(self, localpaths: list[str], s3paths: list[str], 
                    message: str= '') -> None:
-        '''Multiprocess upload images to s3 only if the images were not 
+        '''Multiprocess upload files to s3 only if the files were not 
         uploaded before'''
         # Set profile and bucket names
         aux_function = partial(uploadToS3Bucket,
@@ -111,19 +135,36 @@ class S3Bucket():
         # Zip arguments
         paths = list(zip(localpaths, s3paths))
         # Upload
-        tqdm_message = message if message else f'⬆️  Uploading images from {self.bucket_name}'
+        tqdm_message = message if message else f'⬆️  Uploading files from {self.bucket_name}'
         uploaded = process_map(aux_function, paths, 
                                desc= tqdm_message,
                                chunksize= 1)
         # Quantity of uploaded images
-        print(f'⬆️  {sum(uploaded)} images were uploaded to {self.bucket_name}.')
+        print(f'⬆️  {sum(uploaded)} files were uploaded to {self.bucket_name}.')
+    
+    def deleteFiles(self, s3paths: list[str], message: str= '') -> None:
+        '''Multiprocess deletion of files from s3 bucket'''
+        # Set profile and bucket names
+        aux_function = partial(deleteFromS3Bucket,
+                               profile_name= self.profile_name,
+                               bucket_name= self.bucket_name)
+        # Delete
+        tqdm_message = message if message else f'🚮  Deleting files from {self.bucket_name}'
+        process_map(aux_function, s3paths,
+                    desc= tqdm_message,
+                    chunksize= 1)
+        print(f'🚮  Files deleted from {self.bucket_name}')
 
     def listAllElements(self) -> list[str]:
-        '''List all elements inside the bucket'''
+        '''List all files inside the bucket'''
+        # Session
         session = boto3.Session(profile_name= self.profile_name)
+        # Client
         s3_client = session.client('s3')
+        # Paginator to iterate every 1000 elements
         s3_paginator = s3_client.get_paginator('list_objects_v2')
 
+        # Get names
         elements = []
         for page in s3_paginator.paginate(Bucket= self.bucket_name):
             contents = [key['Key'] for key in page['Contents']]
