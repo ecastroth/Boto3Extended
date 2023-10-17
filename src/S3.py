@@ -88,7 +88,7 @@ def uploadToS3Bucket(paths: tuple[str, str], profile_name: str,
         return 0
 
 
-def deleteFromS3Bucket(path: str, profile_name: str, bucket_name: str):
+def deleteFromS3Bucket(path: str, profile_name: str, bucket_name: str) -> None:
     '''Upload an image to S3 bucket only if the image was not already on it
     '''
     # Session
