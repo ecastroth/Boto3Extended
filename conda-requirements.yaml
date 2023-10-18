@@ -1,0 +1,9 @@
+name: Boto3Extended
+
+dependencies:
+    - python>=3.10
+    - pip>=23.0.1
+    - pip:
+      - tqdm>=4.65.0
+      - pandas>=2.0.1
+      - boto3>=1.26.126
