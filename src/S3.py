@@ -120,6 +120,8 @@ class S3Bucket():
         # Verifies bucket exists and get aws region
         try:
             s3client.head_bucket(Bucket= self.bucket_name)
+            location_response = s3client.get_bucket_location(Bucket= self.bucket_name)
+            self.region_name = 'us-east-1' if location_response['LocationConstraint'] is None else location_response['LocationConstraint']
             print(f'✅ S3 Bucket {self.bucket_name} can be accessed')
         except Exception as e:
             aux = ' '.join([f'❌ The bucket of name "{self.bucket_name}" cannot be',
