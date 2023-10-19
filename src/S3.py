@@ -35,11 +35,17 @@ def deleteBucket(profile_name: str, bucket_name: str, auto_empty: bool= False) -
         response = s3_client.list_objects_v2(Bucket= bucket_name)
         # Bucket contains elements
         if 'Contents' in response.keys():
-            bucket = S3Bucket(profile_name= profile_name, bucket_name= bucket_name)
+            bucket = Bucket(profile_name= profile_name, bucket_name= bucket_name)
             bucket.deleteFiles(bucket.listAllElements())
     # Delete
-    s3_client.delete_bucket(Bucket= bucket_name)
-    print(f'🚮 Deleted {bucket_name} bucket')
+    try:
+        s3_client.delete_bucket(Bucket= bucket_name)
+        print(f'🚮 Deleted {bucket_name} bucket')
+    except ClientError as e:
+        if 'BucketNotEmpty' in str(e):
+            print("🛑 The bucket you're trying to delete still contains elements. Please use auto_empty= True.")
+        else:
+            raise e
 
     
 def downloadFromS3Bucket(paths: tuple[str, str], profile_name: str, 
@@ -102,7 +108,7 @@ def deleteFromS3Bucket(path: str, profile_name: str, bucket_name: str) -> None:
 # -----------------------------------------------------------------------------
 #                           S3 Class
 # -----------------------------------------------------------------------------
-class S3Bucket():
+class Bucket():
     def __init__(self, profile_name, bucket_name):
         self.profile_name = profile_name
         self.bucket_name = bucket_name
