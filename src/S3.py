@@ -10,6 +10,9 @@ import boto3
 from botocore.exceptions import ClientError
 from tqdm.contrib.concurrent import process_map
 
+# Own
+import src.Utils as utils
+
 # -----------------------------------------------------------------------------
 #                           Functions
 # -----------------------------------------------------------------------------
@@ -30,20 +33,35 @@ def deleteBucket(profile_name: str, bucket_name: str, auto_empty: bool= False) -
     session = boto3.Session(profile_name= profile_name)
     # Client
     s3_client = session.client('s3')
-    # Verify if the bucket is empty
+
+    # Automatically empty the bucket
     if auto_empty:
         response = s3_client.list_objects_v2(Bucket= bucket_name)
         # Bucket contains elements
         if 'Contents' in response.keys():
-            bucket = Bucket(profile_name= profile_name, bucket_name= bucket_name)
-            bucket.deleteFiles(bucket.listAllElements())
+            # Paginator to iterate every 1000 elements
+            s3_paginator = s3_client.get_paginator('list_objects_v2')
+            n_deleted, n_errors = 0, 0
+            for page in s3_paginator.paginate(Bucket= bucket_name):
+                elements = [{'Key': utils.formatXML(file['Key'])} for file in page['Contents']]
+                response = s3_client.delete_objects(Bucket= bucket_name,
+                                                    Delete= {'Objects': elements})
+                if 'Deleted' in response.keys():
+                    n_deleted += len(response['Deleted'])
+                if 'Errors' in response.keys():
+                    n_errors += len(response['Errors'])
+            print(f'ℹ️  Deleted files: {n_deleted}')
+            print(f'ℹ️  Files that cannot be deleted due to errors: {n_errors}')
+
     # Delete
     try:
         s3_client.delete_bucket(Bucket= bucket_name)
         print(f'🚮 Deleted {bucket_name} bucket')
     except ClientError as e:
         if 'BucketNotEmpty' in str(e):
-            print("🛑 The bucket you're trying to delete still contains elements. Please use auto_empty= True.")
+            error_message = ("🛑 The bucket you're trying to delete still contains "
+                             + "elements. Please use auto_empty= True.")
+            print(error_message)
         else:
             raise e
 
@@ -94,16 +112,22 @@ def uploadToS3Bucket(paths: tuple[str, str], profile_name: str,
         return 0
 
 
-def deleteFromS3Bucket(path: str, profile_name: str, bucket_name: str) -> None:
-    '''Upload an image to S3 bucket only if the image was not already on it
-    '''
+def deleteFromS3Bucket(paths: list[str], profile_name: str, bucket_name: str) -> None:
+    '''Delete up to 1000 files from an S3 bucket'''
+    raise NotImplementedError()
     # Session
     session = boto3.Session(profile_name= profile_name)
     # Client
     s3client = session.client('s3')
     #Delete
-    s3client.delete_object(Bucket= bucket_name, Key= path)
-    # TODO: It's not possible to know if the deletion was successfull in Boto3 v1.26.76
+
+    response = s3client.delete_objects(Bucket= bucket_name, 
+                                       Delete= {'Objects': [
+                                                    {'Key': utils.formatXML(path)} 
+                                                    for path in paths
+                                                ]
+                                               })
+    
     
 # -----------------------------------------------------------------------------
 #                           S3 Class
@@ -176,6 +200,7 @@ class Bucket():
 
     def deleteFiles(self, s3paths: list[str], message: str= '') -> None:
         '''Multiprocess deletion of files from s3 bucket'''
+        raise NotImplementedError()
         # Set profile and bucket names
         aux_function = partial(deleteFromS3Bucket,
                                profile_name= self.profile_name,
