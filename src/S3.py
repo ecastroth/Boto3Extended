@@ -28,7 +28,9 @@ def listAllBuckets(profile_name: str) -> list[str]:
     return buckets
 
 
-def deleteBucket(profile_name: str, bucket_name: str, auto_empty: bool= False) -> None:
+def deleteBucket(bucket_name: str, profile_name: str, auto_empty: bool= False,
+                 verbose: bool= True) -> None:
+    '''Deletes a bucket and empty it if necessary'''
     # Session
     session = boto3.Session(profile_name= profile_name)
     # Client
@@ -39,19 +41,18 @@ def deleteBucket(profile_name: str, bucket_name: str, auto_empty: bool= False) -
         response = s3_client.list_objects_v2(Bucket= bucket_name)
         # Bucket contains elements
         if 'Contents' in response.keys():
+            print(f'Deleting {bucket_name} files')
             # Paginator to iterate every 1000 elements
             s3_paginator = s3_client.get_paginator('list_objects_v2')
-            n_deleted, n_errors = 0, 0
             for page in s3_paginator.paginate(Bucket= bucket_name):
-                elements = [{'Key': utils.formatXML(file['Key'])} for file in page['Contents']]
-                response = s3_client.delete_objects(Bucket= bucket_name,
-                                                    Delete= {'Objects': elements})
-                if 'Deleted' in response.keys():
-                    n_deleted += len(response['Deleted'])
-                if 'Errors' in response.keys():
-                    n_errors += len(response['Errors'])
-            print(f'ℹ️  Deleted files: {n_deleted}')
-            print(f'ℹ️  Files that cannot be deleted due to errors: {n_errors}')
+                paths = [file['Key'] for file in page['Contents']]
+                n_deleted, n_errors = deleteFromS3Bucket(paths= paths, 
+                                                         profile_name= profile_name,
+                                                         bucket_name= bucket_name)
+            # Summary of deletion
+            print('ℹ️  Summary:')
+            print(f'\tDeleted files: {n_deleted}')
+            print(f'\tFiles that cannot be deleted due to errors: {n_errors}')
 
     # Delete
     try:
@@ -114,19 +115,23 @@ def uploadToS3Bucket(paths: tuple[str, str], profile_name: str,
 
 def deleteFromS3Bucket(paths: list[str], profile_name: str, bucket_name: str) -> None:
     '''Delete up to 1000 files from an S3 bucket'''
-    raise NotImplementedError()
+    # Successfully deleted files, Errors in deleted files
+    n_deleted, n_errors = 0, 0
     # Session
     session = boto3.Session(profile_name= profile_name)
     # Client
     s3client = session.client('s3')
-    #Delete
 
+    # Files to delete
+    obj2delete = {'Objects': [{'Key': utils.formatXML(p)} for p in paths]}
+    # Delete
     response = s3client.delete_objects(Bucket= bucket_name, 
-                                       Delete= {'Objects': [
-                                                    {'Key': utils.formatXML(path)} 
-                                                    for path in paths
-                                                ]
-                                               })
+                                        Delete= obj2delete)
+    if 'Deleted' in response.keys():
+        n_deleted += len(response['Deleted'])
+    if 'Errors' in response.keys():
+        n_errors += len(response['Errors'])
+    return n_deleted, n_errors 
     
     
 # -----------------------------------------------------------------------------
@@ -200,13 +205,15 @@ class Bucket():
 
     def deleteFiles(self, s3paths: list[str], message: str= '') -> None:
         '''Multiprocess deletion of files from s3 bucket'''
-        raise NotImplementedError()
         # Set profile and bucket names
         aux_function = partial(deleteFromS3Bucket,
                                profile_name= self.profile_name,
                                bucket_name= self.bucket_name)
         # Delete
         tqdm_message = message if message else f'🚮  Deleting files from {self.bucket_name}'
+        
+        # Build chunks of max size 1000
+        s3paths = [x for x in utils.splitList(s3paths, 1000)]
         process_map(aux_function, s3paths,
                     desc= tqdm_message,
                     chunksize= 1)
