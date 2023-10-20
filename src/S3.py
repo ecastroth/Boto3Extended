@@ -28,16 +28,19 @@ def listAllBuckets(profile_name: str) -> list[str]:
     return buckets
 
 
-def deleteBuckets(bucket_names: list[str], profile_name: str, auto_empty: bool= False, 
+def deleteBuckets(bucket_names: list[str], profile_name: str, auto_empty: bool= False,
                   message: str= ''):
+    '''Multiprocess deletion of various buckets. Authomatic deletes it's files if
+    necessary'''
     aux_function = partial(deleteBucket, profile_name= profile_name, 
                            auto_empty= auto_empty, verbose= False)
 
     # Deletion
     tqdm_message = message if message else '🚮  Deleting buckets'
-    process_map(aux_function, bucket_names,
-                desc= tqdm_message,
-                chunksize= 1)
+    results = process_map(aux_function, bucket_names,
+                          desc= tqdm_message,
+                          chunksize= 1)
+    # TODO: print undeleted bucket names
 
 
 def deleteBucket(bucket_name: str, profile_name: str, auto_empty: bool= False,
@@ -59,9 +62,9 @@ def deleteBucket(bucket_name: str, profile_name: str, auto_empty: bool= False,
             s3_paginator = s3_client.get_paginator('list_objects_v2')
             for page in s3_paginator.paginate(Bucket= bucket_name):
                 paths = [file['Key'] for file in page['Contents']]
-                delete_response = deleteFromS3Bucket(paths= paths, 
-                                                     profile_name= profile_name,
-                                                     bucket_name= bucket_name)
+                delete_response = _deleteFromBucket(paths= paths, 
+                                                    profile_name= profile_name,
+                                                    bucket_name= bucket_name)
                 n_errors += delete_response[1]
                 n_deleted += delete_response[0]
 
@@ -82,28 +85,8 @@ def deleteBucket(bucket_name: str, profile_name: str, auto_empty: bool= False,
         else:
             raise e
 
-    
-def downloadFromS3Bucket(paths: tuple[str, str], profile_name: str, 
-                         bucket_name: str) -> bool:
-    '''Download file from S3 bucket only if the file was not downloaded before
-    '''
-    # Session
-    session = boto3.Session(profile_name= profile_name)
-    # Client
-    s3client = session.client('s3')
-    # Unzip paths
-    localpath, s3path = paths[0], paths[1]
 
-    # File does not exists so its downloaded
-    if not os.path.exists(localpath):
-        s3client.download_file(bucket_name, s3path, localpath)
-        return 1
-    # File is not downloaded
-    else:
-        return 0
-
-
-def uploadToS3Bucket(paths: tuple[str, str], profile_name: str, 
+def _uploadToBucket(paths: tuple[str, str], profile_name: str, 
                      bucket_name: str) -> bool:
     '''Upload file to S3 bucket only if the file was not already on it
     '''
@@ -128,8 +111,29 @@ def uploadToS3Bucket(paths: tuple[str, str], profile_name: str,
     else:
         return 0
 
+    
+def _downloadFromBucket(paths: tuple[str, str], profile_name: str, 
+                         bucket_name: str) -> bool:
+    '''Download file from S3 bucket only if the file was not downloaded before
+    '''
+    # Session
+    session = boto3.Session(profile_name= profile_name)
+    # Client
+    s3client = session.client('s3')
+    # Unzip paths
+    localpath, s3path = paths[0], paths[1]
 
-def deleteFromS3Bucket(paths: list[str], profile_name: str, bucket_name: str) -> tuple[int, int]:
+    # File does not exists so its downloaded
+    if not os.path.exists(localpath):
+        s3client.download_file(bucket_name, s3path, localpath)
+        return 1
+    # File is not downloaded
+    else:
+        return 0
+
+
+def _deleteFromBucket(paths: list[str], profile_name: str,
+                      bucket_name: str) -> tuple[int, int]:
     '''Delete up to 1000 files from an S3 bucket'''
     # Successfully deleted files, Errors in deleted files
     n_deleted, n_errors = 0, 0
@@ -180,32 +184,12 @@ class Bucket():
             raise Exception(aux)
 
 
-    def downloadFiles(self, localpaths: list[str], s3paths: list[str], 
-                      message: str= '') -> None:
-        '''Multiprocess download files from s3 only if the files were not 
-        downloaded before
-        '''
-        # Set profile and bucket names
-        aux_function = partial(downloadFromS3Bucket,
-                               profile_name= self.profile_name,
-                               bucket_name= self.bucket_name)
-        # Zip arguments
-        paths = list(zip(localpaths, s3paths))
-        # Upload
-        tqdm_message = message if message else f'⬇️  Downloading files from {self.bucket_name}'
-        downloaded = process_map(aux_function, paths, 
-                                 desc= tqdm_message,
-                                 chunksize= 1)
-        # Quantity of uploaded images
-        print(f'⬇️  {sum(downloaded)} files were downloaded from {self.bucket_name}.')
-
-
     def uploadFiles(self, localpaths: list[str], s3paths: list[str], 
                    message: str= '') -> None:
         '''Multiprocess upload files to s3 only if the files were not 
         uploaded before'''
         # Set profile and bucket names
-        aux_function = partial(uploadToS3Bucket,
+        aux_function = partial(_uploadToBucket,
                                profile_name= self.profile_name,
                                bucket_name= self.bucket_name)
         # Zip arguments
@@ -219,10 +203,30 @@ class Bucket():
         print(f'⬆️  {sum(uploaded)} files were uploaded to {self.bucket_name}.')
     
 
+    def downloadFiles(self, localpaths: list[str], s3paths: list[str], 
+                      message: str= '') -> None:
+        '''Multiprocess download files from s3 only if the files were not 
+        downloaded before
+        '''
+        # Set profile and bucket names
+        aux_function = partial(_downloadFromBucket,
+                               profile_name= self.profile_name,
+                               bucket_name= self.bucket_name)
+        # Zip arguments
+        paths = list(zip(localpaths, s3paths))
+        # Upload
+        tqdm_message = message if message else f'⬇️  Downloading files from {self.bucket_name}'
+        downloaded = process_map(aux_function, paths, 
+                                 desc= tqdm_message,
+                                 chunksize= 1)
+        # Quantity of uploaded images
+        print(f'⬇️  {sum(downloaded)} files were downloaded from {self.bucket_name}.')
+
+
     def deleteFiles(self, s3paths: list[str], message: str= '') -> None:
         '''Multiprocess deletion of files from s3 bucket'''
         # Set profile and bucket names
-        aux_function = partial(deleteFromS3Bucket,
+        aux_function = partial(_deleteFromBucket,
                                profile_name= self.profile_name,
                                bucket_name= self.bucket_name)
         
