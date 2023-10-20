@@ -28,9 +28,23 @@ def listAllBuckets(profile_name: str) -> list[str]:
     return buckets
 
 
+def deleteBuckets(bucket_names: list[str], profile_name: str, auto_empty: bool= False, 
+                  message: str= ''):
+    aux_function = partial(deleteBucket, profile_name= profile_name, 
+                           auto_empty= auto_empty, verbose= False)
+
+    # Deletion
+    tqdm_message = message if message else '🚮  Deleting buckets'
+    process_map(aux_function, bucket_names,
+                desc= tqdm_message,
+                chunksize= 1)
+
+
 def deleteBucket(bucket_name: str, profile_name: str, auto_empty: bool= False,
                  verbose: bool= True) -> None:
     '''Deletes a bucket and empty it if necessary'''
+    # Successfully deleted files, Errors in deleted files
+    n_deleted, n_errors = 0, 0
     # Session
     session = boto3.Session(profile_name= profile_name)
     # Client
@@ -41,23 +55,25 @@ def deleteBucket(bucket_name: str, profile_name: str, auto_empty: bool= False,
         response = s3_client.list_objects_v2(Bucket= bucket_name)
         # Bucket contains elements
         if 'Contents' in response.keys():
-            print(f'Deleting {bucket_name} files')
             # Paginator to iterate every 1000 elements
             s3_paginator = s3_client.get_paginator('list_objects_v2')
             for page in s3_paginator.paginate(Bucket= bucket_name):
                 paths = [file['Key'] for file in page['Contents']]
-                n_deleted, n_errors = deleteFromS3Bucket(paths= paths, 
-                                                         profile_name= profile_name,
-                                                         bucket_name= bucket_name)
-            # Summary of deletion
-            print('ℹ️  Summary:')
-            print(f'\tDeleted files: {n_deleted}')
-            print(f'\tFiles that cannot be deleted due to errors: {n_errors}')
+                delete_response = deleteFromS3Bucket(paths= paths, 
+                                                     profile_name= profile_name,
+                                                     bucket_name= bucket_name)
+                n_errors += delete_response[1]
+                n_deleted += delete_response[0]
 
     # Delete
     try:
         s3_client.delete_bucket(Bucket= bucket_name)
-        print(f'🚮 Deleted {bucket_name} bucket')
+        # Summary of deletion
+        if verbose:
+            print('ℹ️  Summary:')
+            print(f'\tDeleted files: {n_deleted}')
+            print(f'\tFiles that cannot be deleted due to errors: {n_errors}')
+            print(f'🚮 Deleted {bucket_name} bucket')
     except ClientError as e:
         if 'BucketNotEmpty' in str(e):
             error_message = ("🛑 The bucket you're trying to delete still contains "
@@ -113,7 +129,7 @@ def uploadToS3Bucket(paths: tuple[str, str], profile_name: str,
         return 0
 
 
-def deleteFromS3Bucket(paths: list[str], profile_name: str, bucket_name: str) -> None:
+def deleteFromS3Bucket(paths: list[str], profile_name: str, bucket_name: str) -> tuple[int, int]:
     '''Delete up to 1000 files from an S3 bucket'''
     # Successfully deleted files, Errors in deleted files
     n_deleted, n_errors = 0, 0
@@ -146,7 +162,7 @@ class Bucket():
         self._verifiyBucket()
 
 
-    def _verifiyBucket(self) -> None:
+    def _verifiyBucket(self):
         '''Verifies the existence of the bucket and gets the aws region'''
         # Session
         session = boto3.Session(profile_name= self.profile_name)
@@ -209,15 +225,18 @@ class Bucket():
         aux_function = partial(deleteFromS3Bucket,
                                profile_name= self.profile_name,
                                bucket_name= self.bucket_name)
-        # Delete
-        tqdm_message = message if message else f'🚮  Deleting files from {self.bucket_name}'
         
+        tqdm_message = message if message else f'🚮  Deleting files from {self.bucket_name}'
         # Build chunks of max size 1000
         s3paths = [x for x in utils.splitList(s3paths, 1000)]
-        process_map(aux_function, s3paths,
-                    desc= tqdm_message,
-                    chunksize= 1)
-        print(f'🚮  Files deleted from {self.bucket_name}')
+        # Delete
+        deleted = process_map(aux_function, s3paths,
+                              desc= tqdm_message,
+                              chunksize= 1)
+        n_errors = sum([x[1] for x in deleted])
+        n_deleted = sum([x[0] for x in deleted])
+        print(f'🚮  {n_errors} files cannot be deleted from {self.bucket_name}')
+        print(f'🚮  {n_deleted} files were deleted from {self.bucket_name}')
 
 
     def listAllElements(self) -> list[str]:
