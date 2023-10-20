@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 from tqdm.contrib.concurrent import process_map
 
 # Own
-import src.Utils as utils
+from . import Utils as utils
 
 # -----------------------------------------------------------------------------
 #                           Functions
@@ -243,8 +243,8 @@ class Bucket():
         print(f'🚮  {n_deleted} files were deleted from {self.bucket_name}')
 
 
-    def listAllElements(self) -> list[str]:
-        '''List all files inside the bucket'''
+    def listElements(self, prefix: str= '') -> list[str]:
+        '''List files inside the bucket'''
         # Session
         session = boto3.Session(profile_name= self.profile_name)
         # Client
@@ -254,7 +254,12 @@ class Bucket():
 
         # Get names
         elements = []
-        for page in s3_paginator.paginate(Bucket= self.bucket_name):
+        operation_parameters = {'Bucket': self.bucket_name,
+                                'Prefix': prefix}
+        for page in s3_paginator.paginate(**operation_parameters):
+            if 'Contents' not in page.keys():
+                print('ℹ️  No elements were founded')
+                return []
             contents = [key['Key'] for key in page['Contents']]
             elements.extend(contents)
         return elements
