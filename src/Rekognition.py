@@ -1,4 +1,3 @@
-
 # -----------------------------------------------------------------------------
 #                           Libraries
 # -----------------------------------------------------------------------------
@@ -11,7 +10,7 @@ import pandas as pd
 from tqdm.contrib.concurrent import process_map
 
 # Own
-from S3 import S3Bucket
+from S3 import Bucket
 
 
 # -----------------------------------------------------------------------------
@@ -42,7 +41,7 @@ class Rekognition():
         self.bucket_name = bucket_name
 
         # Verify if bucket can be accessed and its region
-        self.region_name = S3Bucket(profile_name, bucket_name).region_name
+        self.region_name = Bucket(profile_name, bucket_name).region_name
 
 
     def predict(self, s3paths: list[str]):
