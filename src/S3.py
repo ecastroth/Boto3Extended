@@ -4,11 +4,15 @@
 # Default
 import os
 from functools import partial
+from glob import glob
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # pip
 import boto3
 from botocore.exceptions import ClientError
 from tqdm.contrib.concurrent import process_map
+from tqdm import tqdm
+from mypy_boto3_s3.client import S3Client
 
 # Own
 from . import Utils as utils
@@ -86,14 +90,10 @@ def deleteBucket(bucket_name: str, profile_name: str, auto_empty: bool= False,
             raise e
 
 
-def _uploadToBucket(paths: tuple[str, str], profile_name: str, 
+def _uploadToBucket(paths: tuple[str, str], s3client: S3Client,
                      bucket_name: str) -> bool:
     '''Upload file to S3 bucket only if the file was not already on it
     '''
-    # Session
-    session = boto3.Session(profile_name= profile_name)
-    # Client
-    s3client = session.client('s3')
     # Unzip paths
     localpath, s3path = paths[0], paths[1]
     # Upload
@@ -169,13 +169,13 @@ class Bucket():
     def _verifiyBucket(self):
         '''Verifies the existence of the bucket and gets the aws region'''
         # Session
-        session = boto3.Session(profile_name= self.profile_name)
+        self.session = boto3.Session(profile_name= self.profile_name)
         # Connection
-        s3client = session.client('s3')
+        self.s3client = self.session.client('s3')
         # Verifies bucket exists and get aws region
         try:
-            s3client.head_bucket(Bucket= self.bucket_name)
-            location_response = s3client.get_bucket_location(Bucket= self.bucket_name)
+            self.s3client.head_bucket(Bucket= self.bucket_name)
+            location_response = self.s3client.get_bucket_location(Bucket= self.bucket_name)
             self.region_name = 'us-east-1' if location_response['LocationConstraint'] is None else location_response['LocationConstraint']
             print(f'✅ S3 Bucket {self.bucket_name} can be accessed')
         except Exception as e:
@@ -188,20 +188,38 @@ class Bucket():
                    message: str= '') -> None:
         '''Multiprocess upload files to s3 only if the files were not 
         uploaded before'''
+
         # Set profile and bucket names
         aux_function = partial(_uploadToBucket,
-                               profile_name= self.profile_name,
+                               s3client=self.s3client,
                                bucket_name= self.bucket_name)
         # Zip arguments
-        paths = list(zip(localpaths, s3paths))
+        paths = list(zip(localpaths[:10], s3paths[:10]))
+        total_tasks = len(paths)
         # Upload
         tqdm_message = message if message else f'⬆️  Uploading files from {self.bucket_name}'
-        uploaded = process_map(aux_function, paths, 
-                               desc= tqdm_message,
-                               chunksize= 1)
+
+        uploaded = 0
+        with tqdm(total=total_tasks, desc=tqdm_message) as pbar:
+            with ThreadPoolExecutor(max_workers=50) as executor:
+                futures = [executor.submit(aux_function, task) for task in paths]
+                for future in as_completed(futures):
+                    uploaded += future.result()
+                    pbar.update(1)
+        
         # Quantity of uploaded images
-        print(f'⬆️  {sum(uploaded)} files were uploaded to {self.bucket_name}.')
-    
+        print(f'⬆️  {uploaded} files were uploaded to {self.bucket_name}.')
+
+
+    def uploadFolder(self, localfolder: str, s3folder: str) -> None:
+        '''Multiprocess upload of folder to s3.
+        The function accepts a s3_folder and uploads everything from the folder
+        to the bucket at the specified s3_folder'''
+        files = glob(os.path.join(localfolder, '**', '*.*'), recursive=True)
+        s3_files = [x.replace(localfolder, f'{s3folder}') for x in files]
+        self.uploadFiles(files, s3_files)
+        
+            
 
     def downloadFiles(self, localpaths: list[str], s3paths: list[str], 
                       message: str= '') -> None:
